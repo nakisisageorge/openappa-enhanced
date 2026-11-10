@@ -104,7 +104,7 @@ jobs:
       - name: Generate SBOM
         run: cargo cyclonedx --format json --output-target sbom.json
       - name: Upload SBOM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom
           path: sbom.json
@@ -194,7 +194,7 @@ jobs:
           python3 run_benchmarks.py --threshold 0.05 --fail-on-regression
         continue-on-error: true
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-results
           path: |
@@ -261,7 +261,7 @@ jobs:
       - name: Build release
         run: cargo build --release --package appa --features daemon --target ${{ matrix.target }}
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: appa-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/appa*
