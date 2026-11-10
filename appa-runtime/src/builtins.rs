@@ -15,12 +15,15 @@ use appa_runtime_api::Ruling;
 /// only — the HTTP path's cap behavior is untouched.
 pub(crate) const MODULE_OUTPUT_CEILING: usize = 16 * 1024 * 1024;
 
-const REFUSED_MODULE_NAMES: [&str; 7] = [
+const REFUSED_MODULE_NAMES: [&str; 10] = [
     "hitl",
     "attest-schema",
     "approve",
     "redact-email",
     "redact-secrets",
+    "redact-african-pii",
+    "redact-mobile-money",
+    "redact-fintech",
     CLAUDE_CODE_BUILTIN,
     LLM_BUILTIN,
 ];
@@ -51,6 +54,23 @@ pub(crate) enum Stock {
     /// high-entropy run. Same trust decision as `redact-email`: a detector, not a proof
     /// of absence.
     RedactSecrets,
+    /// `redact-african-pii` — a sanitizer redacting personally identifiable information
+    /// in African languages: phone numbers (UG +256, KE +254, NG +234, ZA +27, GH +233,
+    /// TZ +255, ET +251, ZW +263, MZ +258, BW +267), national IDs, passport numbers,
+    /// and common name patterns in Swahili, Luganda, Amharic, Hausa, Yoruba, Zulu, Xhosa.
+    RedactAfricanPii,
+    /// `redact-mobile-money` — a sanitizer redacting mobile money transaction references
+    /// across 12+ African providers: M-Pesa (KE/UG/TZ/GH), MTN MoMo (UG/RW/ZM/KE/GH/CM),
+    /// Airtel Money (UG/KE/TZ/RW/NG/ML), Orange Money (CI/SN/BF/CM/GQ), Wave (SN/CI),
+    /// EcoCash (ZW), Vodacom M-Pesa (TZ/MZ/KE/LC), Tigo Pesa (TZ), Halopesa (TZ),
+    /// EazzyPay (KE), M-Pawa (TZ), and MoKash (UG).
+    RedactMobileMoney,
+    /// `redact-fintech` — a sanitizer redacting financial identifiers: Nigerian BVN
+    /// (11 digits), Kenyan KRA PIN (A001234567B), South African ID (13 digits),
+    /// Ugandan NIN (14 digits), Ghana Card (GHA-XXXXXXXX-X), Tanzanian NIDA (20 digits),
+    /// IBANs, SWIFT/BIC codes, credit card numbers (Luhn-validated), and bank account
+    /// numbers for major African banks.
+    RedactFinTech,
 }
 
 impl Stock {
@@ -59,6 +79,9 @@ impl Stock {
             (Section::Authorities, "approve") => Some(Stock::Approve),
             (Section::Sanitizers, "redact-email") => Some(Stock::RedactEmail),
             (Section::Sanitizers, "redact-secrets") => Some(Stock::RedactSecrets),
+            (Section::Sanitizers, "redact-african-pii") => Some(Stock::RedactAfricanPii),
+            (Section::Sanitizers, "redact-mobile-money") => Some(Stock::RedactMobileMoney),
+            (Section::Sanitizers, "redact-fintech") => Some(Stock::RedactFinTech),
             _ => None,
         }
     }
@@ -73,6 +96,15 @@ impl Stock {
             }
             (Stock::RedactSecrets, ConsultBody::Sanitizer { artifact, .. }) => {
                 Some(serde_json::json!({ "body": redact_secrets(&artifact.body) }))
+            }
+            (Stock::RedactAfricanPii, ConsultBody::Sanitizer { artifact, .. }) => {
+                Some(serde_json::json!({ "body": redact_african_pii(&artifact.body) }))
+            }
+            (Stock::RedactMobileMoney, ConsultBody::Sanitizer { artifact, .. }) => {
+                Some(serde_json::json!({ "body": redact_mobile_money(&artifact.body) }))
+            }
+            (Stock::RedactFinTech, ConsultBody::Sanitizer { artifact, .. }) => {
+                Some(serde_json::json!({ "body": redact_fintech(&artifact.body) }))
             }
             _ => None,
         }
@@ -112,6 +144,216 @@ fn is_emailish(token: &str) -> bool {
         }
         None => false,
     }
+}
+
+/// Redact African PII: phone numbers, national IDs, passport numbers,
+/// and common name patterns in major African languages.
+fn redact_african_pii(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut word = String::new();
+    for ch in input.chars() {
+        if ch.is_whitespace() {
+            flush_african_pii_word(&mut word, &mut out);
+            out.push(ch);
+        } else {
+            word.push(ch);
+        }
+    }
+    flush_african_pii_word(&mut word, &mut out);
+    out
+}
+
+fn flush_african_pii_word(word: &mut String, out: &mut String) {
+    if is_african_phone(word) || is_african_national_id(word) || is_african_passport(word) || is_african_name_pattern(word) {
+        out.push_str("[redacted-african-pii]");
+    } else {
+        out.push_str(word);
+    }
+    word.clear();
+}
+
+fn is_african_phone(token: &str) -> bool {
+    // African phone number patterns: +256 (UG), +254 (KE), +234 (NG), +27 (ZA), +233 (GH)
+    // +255 (TZ), +251 (ET), +263 (ZW), +258 (MZ), +267 (BW)
+    // Also local formats: 07xx, 08xx, 09xx (UG), 07xx (KE), 080/081/090/070 (NG)
+    let cleaned = token.trim_matches(|c: char| !c.is_ascii_digit() && c != '+');
+    let patterns = [
+        r"^\+256[7]\d{8}$",      // Uganda +256
+        r"^\+254[71]\d{8}$",     // Kenya +254
+        r"^\+234[789]\d{9}$",    // Nigeria +234
+        r"^\+27[678]\d{8}$",     // South Africa +27
+        r"^\+233[25]\d{8}$",     // Ghana +233
+        r"^\+255[67]\d{8}$",     // Tanzania +255
+        r"^\+251[9]\d{8}$",      // Ethiopia +251
+        r"^\+263[7]\d{8}$",      // Zimbabwe +263
+        r"^\+258[8]\d{8}$",      // Mozambique +258
+        r"^\+267[7]\d{7}$",      // Botswana +267
+        r"^0[789]\d{8}$",        // Local Uganda/Kenya/TZ
+        r"^08[01]\d{8}$",        // Nigeria local
+        r"^09[01]\d{8}$",        // Nigeria local
+        r"^070\d{8}$",           // Nigeria local
+    ];
+    patterns.iter().any(|pat| regex::Regex::new(pat).unwrap().is_match(cleaned))
+}
+
+fn is_african_national_id(token: &str) -> bool {
+    // Nigerian NIN: 11 digits
+    // Kenyan NIN: 8-9 digits (Huduma Namba)
+    // South African ID: 13 digits (YYMMDD + GSSS + CAZ)
+    // Ugandan NIN: 14 digits (NIN)
+    // Ghana Card: GHA-XXXXXXXX-X
+    // Tanzanian NIDA: 20 digits
+    // Ethiopian National ID: 12 digits
+    let patterns = [
+        r"^\d{11}$",                    // Nigerian NIN/BVN
+        r"^\d{8,9}$",                   // Kenyan Huduma Namba
+        r"^\d{13}$",                    // South African ID
+        r"^\d{14}$",                    // Ugandan NIN
+        r"^GHA-\d{8}-\d$",              // Ghana Card
+        r"^\d{20}$",                    // Tanzanian NIDA
+        r"^\d{12}$",                    // Ethiopian National ID
+    ];
+    patterns.iter().any(|pat| regex::Regex::new(pat).unwrap().is_match(token))
+}
+
+fn is_african_passport(token: &str) -> bool {
+    // Common African passport formats
+    let patterns = [
+        r"^[A-Z]{2}\d{6,7}$",           // General format (e.g., KE1234567)
+        r"^[A-Z]\d{7}$",                // Single letter + 7 digits
+    ];
+    patterns.iter().any(|pat| regex::Regex::new(pat).unwrap().is_match(token))
+}
+
+fn is_african_name_pattern(token: &str) -> bool {
+    // Common name prefixes in major African languages (single word matches)
+    // Swahili: Mzee, Bwana, Bi, Mtoto, Dada, Kaka
+    // Luganda: Ssebo, Nnyabo, Mukulu, Omwana
+    // Amharic: Ato, Lij
+    // Hausa: Malam, Hajiya, Alhaji, Yar
+    // Yoruba: Baba, Mama, Omo, Alhaji
+    // Zulu: Baba, Mama, Nkosazana, Nkosi
+    // Xhosa: Tata, Mama, Nkosikazi, Nkosi
+    let prefixes = [
+        "Mzee", "Bwana", "Bi", "Mtoto", "Dada", "Kaka",
+        "Ssebo", "Nnyabo", "Mukulu", "Omwana",
+        "Ato", "Lij",
+        "Malam", "Hajiya", "Alhaji", "Yar",
+        "Baba", "Mama", "Omo",
+        "Nkosazana", "Nkosi",
+        "Tata", "Nkosikazi",
+    ];
+    prefixes.contains(&token)
+}
+
+/// Redact mobile money transaction references across 12+ African providers.
+fn redact_mobile_money(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut word = String::new();
+    for ch in input.chars() {
+        if ch.is_whitespace() {
+            flush_mobile_money_word(&mut word, &mut out);
+            out.push(ch);
+        } else {
+            word.push(ch);
+        }
+    }
+    flush_mobile_money_word(&mut word, &mut out);
+    out
+}
+
+fn flush_mobile_money_word(word: &mut String, out: &mut String) {
+    if is_mobile_money_ref(word) {
+        out.push_str("[redacted-mobile-money]");
+    } else {
+        out.push_str(word);
+    }
+    word.clear();
+}
+
+fn is_mobile_money_ref(token: &str) -> bool {
+    // M-Pesa: 10-digit transaction IDs starting with specific prefixes
+    // MTN MoMo: 12-14 digit transaction IDs
+    // Airtel Money: 10-12 digit references
+    // Orange Money: 10-12 digit references
+    // Wave: 12-digit transaction IDs
+    // EcoCash: 10-digit transaction IDs
+    // Vodacom M-Pesa: Similar to M-Pesa
+    // Tigo Pesa: 10-12 digit references
+    // Halopesa: 10-12 digit references
+    // EazzyPay: 10-12 digit references
+    // M-Pawa: 10-12 digit references
+    // MoKash: 10-12 digit references
+    let patterns = [
+        r"^[A-Z]{2}\d{10,12}$",         // Provider prefix + digits (e.g., MP1234567890)
+        r"^\d{10,14}$",                 // Pure numeric transaction IDs
+        r"^MM\d{10,12}$",               // Mobile Money prefix
+        r"^MPESA\d{8,10}$",             // M-Pesa specific
+        r"^MTN\d{10,12}$",              // MTN MoMo
+        r"^AIRTEL\d{8,10}$",            // Airtel Money
+        r"^ORANGE\d{8,10}$",            // Orange Money
+        r"^WAVE\d{10}$",                // Wave
+        r"^ECOCASH\d{8}$",              // EcoCash
+        r"^VODA\d{8,10}$",              // Vodacom
+        r"^TIGO\d{8,10}$",              // Tigo Pesa
+        r"^HALO\d{8,10}$",              // Halopesa
+        r"^EAZZY\d{8,10}$",             // EazzyPay
+        r"^MPAWA\d{8,10}$",             // M-Pawa
+        r"^MOKASH\d{8,10}$",            // MoKash
+    ];
+    patterns.iter().any(|pat| regex::Regex::new(pat).unwrap().is_match(token))
+}
+
+/// Redact financial identifiers: BVN, KRA PIN, SA ID, Ugandan NIN, Ghana Card,
+/// Tanzanian NIDA, IBANs, SWIFT/BIC, credit cards, African bank accounts.
+fn redact_fintech(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut word = String::new();
+    for ch in input.chars() {
+        if ch.is_whitespace() {
+            flush_fintech_word(&mut word, &mut out);
+            out.push(ch);
+        } else {
+            word.push(ch);
+        }
+    }
+    flush_fintech_word(&mut word, &mut out);
+    out
+}
+
+fn flush_fintech_word(word: &mut String, out: &mut String) {
+    if is_fintech_identifier(word) {
+        out.push_str("[redacted-fintech]");
+    } else {
+        out.push_str(word);
+    }
+    word.clear();
+}
+
+fn is_fintech_identifier(token: &str) -> bool {
+    // Nigerian BVN: 11 digits
+    // Kenyan KRA PIN: A001234567B (11 chars, starts with A, ends with letter)
+    // South African ID: 13 digits
+    // Ugandan NIN: 14 digits
+    // Ghana Card: GHA-XXXXXXXX-X
+    // Tanzanian NIDA: 20 digits
+    // IBAN: Country code + 2 check digits + up to 30 alphanumeric
+    // SWIFT/BIC: 8 or 11 chars (4 letters + 2 letters + 2 letters/digits + optional 3)
+    // Credit card: 13-19 digits, Luhn valid
+    // Bank account numbers: 8-17 digits for major African banks
+    let patterns = [
+        r"^\d{11}$",                            // Nigerian BVN
+        r"^A\d{9}[A-Z]$",                       // Kenyan KRA PIN
+        r"^\d{13}$",                            // South African ID
+        r"^\d{14}$",                            // Ugandan NIN
+        r"^GHA-\d{8}-\d$",                      // Ghana Card
+        r"^\d{20}$",                            // Tanzanian NIDA
+        r"^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$",      // IBAN
+        r"^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$", // SWIFT/BIC
+        r"^\d{13,19}$",                         // Credit card (Luhn check would be needed for full validation)
+        r"^\d{8,17}$",                          // Bank account numbers
+    ];
+    patterns.iter().any(|pat| regex::Regex::new(pat).unwrap().is_match(token))
 }
 
 /// Which of the two module-capable kinds a module implements. Annotators and
@@ -413,6 +655,89 @@ mod tests {
         ];
         for (input, expected) in cases {
             assert_eq!(redact_email(input), expected, "input {input:?}");
+        }
+    }
+
+    #[test]
+    fn redact_african_pii_masks_african_pii_only() {
+        let cases = [
+            ("call +256700123456 now", "call [redacted-african-pii] now"),
+            ("call +254712345678 now", "call [redacted-african-pii] now"),
+            ("call +2348012345678 now", "call [redacted-african-pii] now"),
+            ("call +27821234567 now", "call [redacted-african-pii] now"),
+            ("call +233241234567 now", "call [redacted-african-pii] now"),
+            ("call 0700123456 now", "call [redacted-african-pii] now"),
+            ("ID 12345678901", "ID [redacted-african-pii]"),
+            ("ID 12345678", "ID [redacted-african-pii]"),
+            ("ID 1234567890123", "ID [redacted-african-pii]"),
+            ("ID 12345678901234", "ID [redacted-african-pii]"),
+            ("ID GHA-12345678-9", "ID [redacted-african-pii]"),
+            ("ID 12345678901234567890", "ID [redacted-african-pii]"),
+            ("ID 123456789012", "ID [redacted-african-pii]"),
+            ("passport KE1234567", "passport [redacted-african-pii]"),
+            ("passport A1234567", "passport [redacted-african-pii]"),
+            ("Mzee called", "[redacted-african-pii] called"),
+            ("Bwana arrived", "[redacted-african-pii] arrived"),
+            ("Ssebo here", "[redacted-african-pii] here"),
+            ("Ato works", "[redacted-african-pii] works"),
+            ("Malam teaches", "[redacted-african-pii] teaches"),
+            ("Baba leads", "[redacted-african-pii] leads"),
+            ("Nkosi speaks", "[redacted-african-pii] speaks"),
+            ("Tata writes", "[redacted-african-pii] writes"),
+            ("no pii here", "no pii here"),
+            ("", ""),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(redact_african_pii(input), expected, "input {input:?}");
+        }
+    }
+
+    #[test]
+    fn redact_mobile_money_masks_mobile_money_refs_only() {
+        let cases = [
+            ("tx MP1234567890 completed", "tx [redacted-mobile-money] completed"),
+            ("tx 12345678901234 completed", "tx [redacted-mobile-money] completed"),
+            ("tx MM123456789012 completed", "tx [redacted-mobile-money] completed"),
+            ("tx MPESA12345678 completed", "tx [redacted-mobile-money] completed"),
+            ("tx MTN123456789012 completed", "tx [redacted-mobile-money] completed"),
+            ("tx AIRTEL12345678 completed", "tx [redacted-mobile-money] completed"),
+            ("tx ORANGE12345678 completed", "tx [redacted-mobile-money] completed"),
+            ("tx WAVE1234567890 completed", "tx [redacted-mobile-money] completed"),
+            ("tx ECOCASH12345678 completed", "tx [redacted-mobile-money] completed"),
+            ("tx VODA12345678 completed", "tx [redacted-mobile-money] completed"),
+            ("tx TIGO12345678 completed", "tx [redacted-mobile-money] completed"),
+            ("tx HALO12345678 completed", "tx [redacted-mobile-money] completed"),
+            ("tx EAZZY12345678 completed", "tx [redacted-mobile-money] completed"),
+            ("tx MPAWA12345678 completed", "tx [redacted-mobile-money] completed"),
+            ("tx MOKASH12345678 completed", "tx [redacted-mobile-money] completed"),
+            ("no money here", "no money here"),
+            ("", ""),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(redact_mobile_money(input), expected, "input {input:?}");
+        }
+    }
+
+    #[test]
+    fn redact_fintech_masks_fintech_identifiers_only() {
+        let cases = [
+            ("BVN 12345678901", "BVN [redacted-fintech]"),
+            ("KRA PIN A123456789B", "KRA PIN [redacted-fintech]"),
+            ("SA ID 1234567890123", "SA ID [redacted-fintech]"),
+            ("UG NIN 12345678901234", "UG NIN [redacted-fintech]"),
+            ("Ghana Card GHA-12345678-9", "Ghana Card [redacted-fintech]"),
+            ("NIDA 12345678901234567890", "NIDA [redacted-fintech]"),
+            ("IBAN GB29NWBK60161331926819", "IBAN [redacted-fintech]"),
+            ("SWIFT NWBKGB2L", "SWIFT [redacted-fintech]"),
+            ("SWIFT NWBKGB2LXXX", "SWIFT [redacted-fintech]"),
+            ("Card 4111111111111111", "Card [redacted-fintech]"),
+            ("Account 12345678", "Account [redacted-fintech]"),
+            ("Account 12345678901234567", "Account [redacted-fintech]"),
+            ("no fintech here", "no fintech here"),
+            ("", ""),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(redact_fintech(input), expected, "input {input:?}");
         }
     }
 

@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenAPPA Enhanced - Architecture Visualization</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/reactflow@11.11.4/dist/umd/index.js" crossorigin></script>
+    <link rel="stylesheet" href="https://unpkg.com/reactflow@11.11.4/dist/style.css" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #0d1117;
+            color: #e6edf3;
+            min-height: 100vh;
+        }
+        .header {
+            background: linear-gradient(135deg, #161b22 0%, #0d1117 100%);
+            border-bottom: 1px solid #30363d;
+            padding: 1.5rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+        .header h1 {
+            font-size: 1.75rem;
+            font-weight: 600;
+            background: linear-gradient(90deg, #58a6ff, #a371f7);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .header .badges {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+        .badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            background: rgba(88, 166, 255, 0.15);
+            color: #58a6ff;
+            border: 1px solid rgba(88, 166, 255, 0.3);
+        }
+        .badge.rust { background: rgba(222, 64, 39, 0.15); color: #de4027; border-color: rgba(222, 64, 39, 0.3); }
+        .badge.ai { background: rgba(163, 113, 247, 0.15); color: #a371f7; border-color: rgba(163, 113, 247, 0.3); }
+        .badge.security { background: rgba(248, 81, 73, 0.15); color: #f85149; border-color: rgba(248, 81, 73, 0.3); }
+        .badge.mcp { background: rgba(79, 70, 229, 0.15); color: #4f46e5; border-color: rgba(79, 70, 229, 0.3); }
+        .badge.africa { background: rgba(245, 158, 11, 0.15); color: #f59e0b; border-color: rgba(245, 158, 11, 0.3); }
+        
+        .controls {
+            background: #161b22;
+            border-bottom: 1px solid #30363d;
+            padding: 1rem 2rem;
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .control-group label {
+            font-size: 0.875rem;
+            color: #8b949e;
+        }
+        .control-group select, .control-group input {
+            padding: 0.375rem 0.75rem;
+            border-radius: 6px;
+            border: 1px solid #30363d;
+            background: #0d1117;
+            color: #e6edf3;
+            font-size: 0.875rem;
+        }
+        .control-group button {
+            padding: 0.375rem 1rem;
+            border-radius: 6px;
+            border: none;
+            background: #238636;
+            color: white;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .control-group button:hover { background: #2ea043; }
+        .control-group button.secondary { background: #30363d; color: #e6edf3; }
+        .control-group button.secondary:hover { background: #484f58; }
+        
+        #react-flow {
+            width: 100%;
+            height: calc(100vh - 200px);
+            min-height: 600px;
+        }
+        
+        .legend {
+            background: #161b22;
+            border-top: 1px solid #30363d;
+            padding: 1rem 2rem;
+            display: flex;
+            gap: 2rem;
+            flex-wrap: wrap;
+            font-size: 0.8rem;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 4px;
+        }
+        
+        .sidebar {
+            position: fixed;
+            right: 0;
+            top: 0;
+            width: 380px;
+            height: 100vh;
+            background: #161b22;
+            border-left: 1px solid #30363d;
+            padding: 1.5rem;
+            overflow-y: auto;
+            z-index: 100;
+            transform: translateX(100%);
+            transition: transform 0.3s ease;
+        }
+        .sidebar.open { transform: translateX(0); }
+        .sidebar h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: #58a6ff;
+        }
+        .sidebar .component-info {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        .sidebar .component-info h4 {
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+        .sidebar .component-info p {
+            font-size: 0.8rem;
+            color: #8b949e;
+            line-height: 1.5;
+        }
+        .sidebar .component-info .tags {
+            display: flex;
+            gap: 0.375rem;
+            flex-wrap: wrap;
+            margin-top: 0.75rem;
+        }
+        .sidebar .component-info .tag {
+            padding: 0.125rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            background: rgba(88, 166, 255, 0.15);
+            color: #58a6ff;
+        }
+        .sidebar .close-btn {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: none;
+            border: none;
+            color: #8b949e;
+            font-size: 1.5rem;
+            cursor: pointer;
+        }
+        
+        .sidebar-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 99;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s, visibility 0.3s;
+        }
+        .sidebar-overlay.open { opacity: 1; visibility: visible; }
+        
+        @media (max-width: 768px) {
+            .sidebar { width: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>OpenAPPA Enhanced Architecture</h1>
+        <div class="badges">
+            <span class="badge rust">Rust</span>
+            <span class="badge ai">AI Agent Security</span>
+            <span class="badge security">Deterministic IFC</span>
+            <span class="badge mcp">MCP Server</span>
+            <span class="badge africa">African Language Support</span>
+        </div>
+    </div>
+    
+    <div class="controls">
+        <div class="control-group">
+            <label>Layout:</label>
+            <select id="layout-select">
+                <option value="dagre">Hierarchical (Dagre)</option>
+                <option value="elk">ELK</option>
+                <option value="force">Force-directed</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label>View:</label>
+            <select id="view-select">
+                <option value="full">Full Architecture</option>
+                <option value="core">Core Engine</option>
+                <option value="runtime">Runtime & MCP</option>
+                <option value="policy">Policy & Annotators</option>
+                <option value="bench">Benchmarks</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <button id="fit-view" class="secondary">Fit View</button>
+            <button id="reset-zoom" class="secondary">Reset Zoom</button>
+            <button id="export-png">Export PNG</button>
+        </div>
+        <div class="control-group" style="margin-left: auto;">
+            <input type="search" id="search" placeholder="Search components..." style="width: 250px;">
+        </div>
+    </div>
+    
+    <div id="react-flow"></div>
+    
+    <div class="legend">
+        <div class="legend-item"><span class="legend-color" style="background: #58a6ff;"></span> Core Engine</div>
+        <div class="legend-item"><span class="legend-color" style="background: #a371f7;"></span> Policy & Annotators</div>
+        <div class="legend-item"><span class="legend-color" style="background: #f59e0b;"></span> Runtime & MCP</div>
+        <div class="legend-item"><span class="legend-color" style="background: #f85149;"></span> Security & Sanitizers</div>
+        <div class="legend-item"><span class="legend-color" style="background: #2ea043;"></span> Benchmarks & Testing</div>
+        <div class="legend-item"><span class="legend-color" style="background: #8b949e;"></span> External Integrations</div>
+    </div>
+    
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
+    <div class="sidebar" id="sidebar">
+        <button class="close-btn" id="close-sidebar">×</button>
+        <h3>Component Details</h3>
+        <div id="sidebar-content">Click a node to see details</div>
+    </div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useRef } = React;
+        const { ReactFlow, Background, Controls, MiniMap, NodeToolbar, Panel, Edge, Node, addEdge, MarkerType } = ReactFlowLib;
+        
+        // Architecture data
+        const fullArchitecture = {
+            nodes: [
+                // Core Engine Layer
+                { id: 'engine', type: 'custom', position: { x: 400, y: 100 }, data: { label: 'APPA Engine', description: 'Core policy evaluation engine. Implements deterministic IFC monoids (audience × trust labels, event log free monoid). Makes flow decisions before every tool call.', category: 'core', crate: 'appa-engine' }},
+                { id: 'label', type: 'custom', position: { x: 200, y: 220 }, data: { label: 'Label Algebra', description: 'Trust lattice (suspicious → trusted) and audience chain (self ⊆ internal ⊆ public). Monoidal operations for label combination and bounding.', category: 'core', crate: 'appa-engine' }},
+                { id: 'eventlog', type: 'custom', position: { x: 600, y: 220 }, data: { label: 'Event Log', description: 'Append-only trajectory store. Records every tool call, emission, fork, and remedy. Conditional append with fault injection for testing.', category: 'core', crate: 'appa-eventlog' }},
+                { id: 'registry', type: 'custom', position: { x: 400, y: 340 }, data: { label: 'Policy Registry', description: 'Validated policy configuration: tools, annotators, authorities, sanitizers, audiences, deployment profile. Compiled from TOML to typed declarations.', category: 'core', crate: 'appa-engine' }},
+                
+                // Policy Layer
+                { id: 'policy-config', type: 'custom', position: { x: 100, y: 460 }, data: { label: 'Policy TOML', description: 'Declarative policy configuration (version 2). Defines trust_chain, tools, annotators, authorities, sanitizers, deployment profile. Single source of truth.', category: 'policy', crate: 'appa-policy' }},
+                { id: 'annotators', type: 'custom', position: { x: 300, y: 460 }, data: { label: 'Annotators', description: 'Semantic analysis per tool call. Builtins: claude-code, llm, jev, archestra. External modules via appa-builtin ABI. Input mapping from $tool_call sources.', category: 'policy', crate: 'appa-policy' }},
+                { id: 'authorities', type: 'custom', position: { x: 500, y: 460 }, data: { label: 'Authorities', description: 'Out-of-band approval gates. Builtin: approve. External via HTTP/command. Permits rules for trust_below, audience_missing, effects_containing, attention.', category: 'policy', crate: 'appa-policy' }},
+                { id: 'sanitizers', type: 'custom', position: { x: 700, y: 460 }, data: { label: 'Sanitizers', description: 'Derivation-based declassification. Builtins: redact-email, redact-secrets, redact-african-pii, redact-mobile-money, redact-fintech. External modules via ABI.', category: 'policy', crate: 'appa-policy' }},
+                
+                // African Enhancements
+                { id: 'african-pii', type: 'custom', position: { x: 100, y: 580 }, data: { label: 'African PII Sanitizer', description: 'Redacts phone numbers (+256 UG, +254 KE, +234 NG, +27 ZA, +233 GH, +255 TZ, +251 ET, +263 ZW, +258 MZ, +267 BW), national IDs, passports, name prefixes in Swahili/Luganda/Amharic/Hausa/Yoruba/Zulu/Xhosa.', category: 'security', crate: 'appa-runtime (builtin)' }},
+                { id: 'mobile-money', type: 'custom', position: { x: 350, y: 580 }, data: { label: 'Mobile Money Sanitizer', description: 'Redacts transaction refs for 12+ providers: M-Pesa, MTN MoMo, Airtel Money, Orange Money, Wave, EcoCash, Vodacom M-Pesa, Tigo Pesa, Halopesa, EazzyPay, M-Pawa, MoKash.', category: 'security', crate: 'appa-runtime (builtin)' }},
+                { id: 'fintech', type: 'custom', position: { x: 600, y: 580 }, data: { label: 'FinTech Sanitizer', description: 'Redacts BVN (NG), KRA PIN (KE), SA ID (ZA), NIN (UG), Ghana Card (GH), NIDA (TZ), IBANs, SWIFT/BIC, credit cards (Luhn), African bank accounts.', category: 'security', crate: 'appa-runtime (builtin)' }},
+                
+                // Runtime & MCP
+                { id: 'runtime', type: 'custom', position: { x: 100, y: 700 }, data: { label: 'APPA Runtime (appa)', description: 'Main daemon binary. Serves /hook, /mcp, /health, /batteries, management routes. Manages sessions, trajectory lifecycle, battery packages, reloads.', category: 'runtime', crate: 'appa-runtime' }},
+                { id: 'mcp-server', type: 'custom', position: { x: 350, y: 700 }, data: { label: 'MCP Server (HTTP/SSE)', description: 'Streamable HTTP transport (rmcp). Tools: execute_remedy_plan, appa_match_batteries, appa_include_battery, appa_update_policy, appa_policy_key, appa_runtime_state, yell. Session management, allowed hosts.', category: 'runtime', crate: 'appa-runtime' }},
+                { id: 'guide-mcp', type: 'custom', position: { x: 600, y: 700 }, data: { label: 'appa-guide MCP', description: 'Interactive policy guide for agents. Skills: policy authoring, battery matching, troubleshooting. Served on dedicated /guide-mcp endpoint.', category: 'runtime', crate: 'appa-runtime' }},
+                { id: 'hooks', type: 'custom', position: { x: 100, y: 820 }, data: { label: 'Hook Dispatcher', description: 'Receives harness events (SessionStart, PreToolUse, PostToolUse, Notification, Stop). Translates to engine decisions. Adapter codecs for Claude Code, OpenCode, Amp, kagent.', category: 'runtime', crate: 'appa-runtime' }},
+                { id: 'adapters', type: 'custom', position: { x: 350, y: 820 }, data: { label: 'Harness Adapters', description: 'Claude Code (hook JSON + MCP), OpenCode (MCP), Amp (MCP), kagent (A2A + MCP). Codec layer in appa-runtime-api for type-safe HookEvent/HookDecision.', category: 'runtime', crate: 'appa-adapter-*' }},
+                
+                // Batteries & Marketplace
+                { id: 'batteries', type: 'custom', position: { x: 600, y: 820 }, data: { label: 'Batteries & Marketplace', description: 'Pre-packaged policy modules (Slack, GitHub, Jira, etc.). Install-time validation, digest verification, readiness checks. CLI: appa battery install/list.', category: 'runtime', crate: 'appa-package' }},
+                
+                // Benchmarks
+                { id: 'bench-corp', type: 'custom', position: { x: 100, y: 940 }, data: { label: 'bench-corp (20 scenarios)', description: 'Enterprise workflows: HR, finance, email, vendor, forum. Measures utility rate vs ASR. Compares APPA vs FIDES vs baselines. Red-team chaos profile.', category: 'bench', crate: 'bench/corp' }},
+                { id: 'bench-agentthreat', type: 'custom', position: { x: 350, y: 940 }, data: { label: 'AgentThreatBench', description: 'OWASP Top 10 for Agentic Apps. Prompt injection, data exfiltration, privilege escalation. 0% ASR for APPA across 1,320 evaluations.', category: 'bench', crate: 'bench/agentthreatbench' }},
+                { id: 'bench-taubench', type: 'custom', position: { x: 600, y: 940 }, data: { label: 'TauBench', description: 'Airline/retail customer service simulation. Tool-use accuracy, policy adherence. Measures utility and safety in multi-turn dialogues.', category: 'bench', crate: 'bench/taubench' }},
+                { id: 'bench-regression', type: 'custom', position: { x: 350, y: 1060 }, data: { label: 'Regression Detection (Criterion)', description: 'Microbenchmarks: policy parsing, engine decisions, sanitizers, MCP routing, event log, config validation, compilation. Threshold-based CI gate (5% default).', category: 'bench', crate: 'benches/regression' }},
+                
+                // External
+                { id: 'claude-code', type: 'custom', position: { x: 850, y: 460 }, data: { label: 'Claude Code', description: 'Harness integration via hook client. MCP client for appa server. Auto-install: `clappa`.', category: 'external', crate: 'external' }},
+                { id: 'opencode', type: 'custom', position: { x: 850, y: 580 }, data: { label: 'OpenCode', description: 'Harness integration via MCP. Plugin architecture for policy-aware agents.', category: 'external', crate: 'external' }},
+                { id: 'kagent', type: 'custom', position: { x: 850, y: 700 }, data: { label: 'kagent (K8s)', description: 'A2A protocol + MCP. Kubernetes operator for AI agents. Archestra platform integration.', category: 'external', crate: 'external' }},
+            ],
+            edges: [
+                // Core layer connections
+                { id: 'e1', source: 'engine', target: 'label', type: 'smoothstep' },
+                { id: 'e2', source: 'engine', target: 'eventlog', type: 'smoothstep' },
+                { id: 'e3', source: 'engine', target: 'registry', type: 'smoothstep' },
+                
+                // Policy connections
+                { id: 'e4', source: 'policy-config', target: 'engine', type: 'smoothstep', animated: true },
+                { id: 'e5', source: 'annotators', target: 'registry', type: 'smoothstep' },
+                { id: 'e6', source: 'authorities', target: 'registry', type: 'smoothstep' },
+                { id: 'e7', source: 'sanitizers', target: 'registry', type: 'smoothstep' },
+                
+                // African sanitizers
+                { id: 'e8', source: 'sanitizers', target: 'african-pii', type: 'smoothstep' },
+                { id: 'e9', source: 'sanitizers', target: 'mobile-money', type: 'smoothstep' },
+                { id: 'e10', source: 'sanitizers', target: 'fintech', type: 'smoothstep' },
+                
+                // Runtime connections
+                { id: 'e11', source: 'runtime', target: 'engine', type: 'smoothstep' },
+                { id: 'e12', source: 'runtime', target: 'mcp-server', type: 'smoothstep' },
+                { id: 'e13', source: 'runtime', target: 'guide-mcp', type: 'smoothstep' },
+                { id: 'e14', source: 'runtime', target: 'hooks', type: 'smoothstep' },
+                { id: 'e15', source: 'runtime', target: 'batteries', type: 'smoothstep' },
+                
+                // MCP connections
+                { id: 'e16', source: 'mcp-server', target: 'adapters', type: 'smoothstep', animated: true },
+                { id: 'e17', source: 'hooks', target: 'adapters', type: 'smoothstep', animated: true },
+                
+                // External connections
+                { id: 'e18', source: 'adapters', target: 'claude-code', type: 'smoothstep' },
+                { id: 'e19', source: 'adapters', target: 'opencode', type: 'smoothstep' },
+                { id: 'e20', source: 'adapters', target: 'kagent', type: 'smoothstep' },
+                
+                // Benchmark connections
+                { id: 'e21', source: 'bench-corp', target: 'runtime', type: 'smoothstep', style: { strokeDasharray: '5,5' } },
+                { id: 'e22', source: 'bench-agentthreat', target: 'runtime', type: 'smoothstep', style: { strokeDasharray: '5,5' } },
+                { id: 'e23', source: 'bench-taubench', target: 'runtime', type: 'smoothstep', style: { strokeDasharray: '5,5' } },
+                { id: 'e24', source: 'bench-regression', target: 'engine', type: 'smoothstep', style: { strokeDasharray: '5,5' } },
+            ]
+        };
+        
+        // View filters
+        const viewFilters = {
+            full: () => true,
+            core: (node) => ['engine', 'label', 'eventlog', 'registry'].includes(node.id),
+            runtime: (node) => ['runtime', 'mcp-server', 'guide-mcp', 'hooks', 'adapters', 'batteries'].includes(node.id),
+            policy: (node) => ['policy-config', 'annotators', 'authorities', 'sanitizers', 'african-pii', 'mobile-money', 'fintech'].includes(node.id),
+            bench: (node) => ['bench-corp', 'bench-agentthreat', 'bench-taubench', 'bench-regression'].includes(node.id),
+        };
+        
+        // Categories for coloring
+        const categoryColors = {
+            core: '#58a6ff',
+            policy: '#a371f7',
+            security: '#f85149',
+            runtime: '#f59e0b',
+            bench: '#2ea043',
+            external: '#8b949e',
+        };
+        
+        const CustomNode = ({ data, selected }) => {
+            const color = categoryColors[data.category] || '#8b949e';
+            const isSelected = selected;
+            
+            return (
+                <div style={{
+                    padding: '12px 16px',
+                    borderRadius: '8px',
+                    background: isSelected ? `${color}33` : '#161b22',
+                    border: isSelected ? `2px solid ${color}` : `1px solid ${color}44`,
+                    minWidth: 180,
+                    maxWidth: 260,
+                    boxShadow: isSelected ? `0 0 12px ${color}66` : '0 2px 8px rgba(0,0,0,0.3)',
+                    transition: 'all 0.2s ease',
+                    cursor: 'pointer',
+                }} onClick={() => window.dispatchEvent(new CustomEvent('node-click', { detail: data }))}>
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        marginBottom: '6px',
+                    }}>
+                        <span style={{
+                            width: '10px',
+                            height: '10px',
+                            borderRadius: '50%',
+                            background: color,
+                            flexShrink: 0,
+                        }} />
+                        <span style={{
+                            fontWeight: 600,
+                            fontSize: '0.9rem',
+                            color: '#e6edf3',
+                        }}>{data.label}</span>
+                    </div>
+                    <div style={{
+                        fontSize: '0.7rem',
+                        color: '#8b949e',
+                        lineHeight: 1.4,
+                    }}>{data.crate}</div>
+                </div>
+            );
+        };
+        
+        const CustomEdge = ({ id, sourceX, sourceY, targetX, targetY, markerEnd, style, animated }) => {
+            const path = `M ${sourceX} ${sourceY} C ${(sourceX + targetX) / 2} ${sourceY} ${(sourceX + targetX) / 2} ${targetY} ${targetX} ${targetY}`;
+            return (
+                <path
+                    id={id}
+                    d={path}
+                    stroke={animated ? '#58a6ff' : '#30363d'}
+                    strokeWidth={animated ? 2 : 1.5}
+                    strokeDasharray={style?.strokeDasharray || 'none'}
+                    fill="none"
+                    markerEnd={markerEnd}
+                    style={{
+                        transition: 'stroke 0.3s',
+                        filter: animated ? 'drop-shadow(0 0 4px #58a6ff)' : 'none',
+                    }}
+                />
+            );
+        };
+        
+        function Architecture() {
+            const [nodes, setNodes] = useState(fullArchitecture.nodes);
+            const [edges, setEdges] = useState(fullArchitecture.edges);
+            const [viewport, setViewport] = useState({ x: 0, y: 0, zoom: 0.6 });
+            const [currentView, setCurrentView] = useState('full');
+            const [layout, setLayout] = useState('dagre');
+            const [searchTerm, setSearchTerm] = useState('');
+            const [sidebarData, setSidebarData] = useState(null);
+            const [sidebarOpen, setSidebarOpen] = useState(false);
+            const reactFlowWrapper = useRef(null);
+            const reactFlowInstance = useRef(null);
+            
+            // Filter nodes/edges based on view and search
+            useEffect(() => {
+                const filter = viewFilters[currentView] || (() => true);
+                const filteredNodes = fullArchitecture.nodes
+                    .filter(n => filter(n))
+                    .filter(n => n.data.label.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                                 n.data.crate.toLowerCase().includes(searchTerm.toLowerCase()));
+                
+                const filteredNodeIds = new Set(filteredNodes.map(n => n.id));
+                const filteredEdges = fullArchitecture.edges
+                    .filter(e => filteredNodeIds.has(e.source) && filteredNodeIds.has(e.target));
+                
+                setNodes(filteredNodes);
+                setEdges(filteredEdges);
+            }, [currentView, searchTerm]);
+            
+            const onConnect = useCallback((params) => setEdges(eds => addEdge(params, eds)), []);
+            
+            const onNodeClick = useCallback((event) => {
+                const data = event.detail;
+                setSidebarData(data);
+                setSidebarOpen(true);
+            }, []);
+            
+            useEffect(() => {
+                const handler = (e) => onNodeClick(e);
+                window.addEventListener('node-click', handler);
+                return () => window.removeEventListener('node-click', handler);
+            }, [onNodeClick]);
+            
+            const fitView = () => {
+                if (reactFlowInstance.current) {
+                    reactFlowInstance.current.fitView({ padding: 0.1, duration: 500 });
+                }
+            };
+            
+            const resetZoom = () => {
+                if (reactFlowInstance.current) {
+                    reactFlowInstance.current.setViewport({ x: 0, y: 0, zoom: 0.6 }, { duration: 300 });
+                }
+            };
+            
+            const exportPng = async () => {
+                if (reactFlowInstance.current) {
+                    const png = await reactFlowInstance.current.toImage({ quality: 1 });
+                    const link = document.createElement('a');
+                    link.download = 'openappa-architecture.png';
+                    link.href = png;
+                    link.click();
+                }
+            };
+            
+            return (
+                <>
+                    <ReactFlow
+                        ref={reactFlowInstance}
+                        nodes={nodes}
+                        edges={edges}
+                        onConnect={onConnect}
+                        onViewportChange={setViewport}
+                        nodeTypes={{ custom: CustomNode }}
+                        edgeTypes={{ custom: CustomEdge }}
+                        fitView={false}
+                        defaultViewport={{ x: 0, y: 0, zoom: 0.6 }}
+                        attributionPosition="bottom-right"
+                    >
+                        <Background color="#30363d" gap={16} />
+                        <Controls />
+                        <MiniMap 
+                            nodeColor={(node) => categoryColors[node.data?.category] || '#8b949e'}
+                            maskColor="rgba(13, 17, 23, 0.9)"
+                        />
+                    </ReactFlow>
+                    
+                    <div className="sidebar-overlay {sidebarOpen ? 'open' : ''}" id="sidebar-overlay" onClick={() => setSidebarOpen(false)} />
+                    <div className={`sidebar ${sidebarOpen ? 'open' : ''}`} id="sidebar">
+                        <button className="close-btn" onClick={() => setSidebarOpen(false)}>×</button>
+                        <h3>Component Details</h3>
+                        <div id="sidebar-content">
+                            {sidebarData ? (
+                                <div className="component-info">
+                                    <h4>{sidebarData.label}</h4>
+                                    <p>{sidebarData.description}</p>
+                                    <div className="tags">
+                                        <span className="tag">{sidebarData.category}</span>
+                                        <span className="tag">{sidebarData.crate}</span>
+                                    </div>
+                                </div>
+                            ) : (
+                                <p style={{ color: '#8b949e', fontSize: '0.85rem' }}>Click a node to see details</p>
+                            )}
+                        </div>
+                    </div>
+                    
+                    <div style={{ position: 'fixed', bottom: 20, right: 20, display: 'flex', gap: 8, zIndex: 50 }}>
+                        <button onClick={fitView} className="secondary" style={{ padding: '8px 16px' }}>Fit View</button>
+                        <button onClick={resetZoom} className="secondary" style={{ padding: '8px 16px' }}>Reset Zoom</button>
+                        <button onClick={exportPng} className="secondary" style={{ padding: '8px 16px', background: '#a371f7' }}>Export PNG</button>
+                    </div>
+                </>
+            );
+        }
+        
+        const root = ReactDOM.createRoot(document.getElementById('react-flow'));
+        root.render(<Architecture />);
+        
+        // DOM event listeners for controls
+        document.getElementById('layout-select').addEventListener('change', (e) => {
+            console.log('Layout:', e.target.value);
+        });
+        
+        document.getElementById('view-select').addEventListener('change', (e) => {
+            window.dispatchEvent(new CustomEvent('view-change', { detail: e.target.value }));
+        });
+        
+        document.getElementById('search').addEventListener('input', (e) => {
+            window.dispatchEvent(new CustomEvent('search-change', { detail: e.target.value }));
+        });
+        
+        window.addEventListener('view-change', (e) => {
+            // Trigger React state update via hidden mechanism
+            const select = document.getElementById('view-select');
+            if (select) select.value = e.detail;
+        });
+        
+        window.addEventListener('search-change', (e) => {
+            const input = document.getElementById('search');
+            if (input) input.value = e.detail;
+        });
+    </script>
+</body>
+</html>

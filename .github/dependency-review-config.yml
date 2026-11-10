@@ -1,0 +1,45 @@
+# Dependency Review Configuration
+# This file configures the GitHub Actions dependency review action
+
+# Fail on high severity vulnerabilities
+fail-on-severity: high
+
+# Allow specific licenses (these are the licenses we allow in our dependency policy)
+allow-licenses:
+  - MIT
+  - Apache-2.0
+  - BSD-2-Clause
+  - BSD-3-Clause
+  - ISC
+  - Unicode-DFS-2016
+  - CC0-1.0
+  - Zlib
+
+# Deny specific licenses
+deny-licenses:
+  - GPL-2.0
+  - GPL-3.0
+  - AGPL-3.0
+  - LGPL-2.1
+  - LGPL-3.0
+  - MPL-2.0
+  - SSPI
+  - Custom
+
+# Maximum allowed duplicate dependencies
+max-duplicates: 0
+
+# Scope of review
+scope:
+  - runtime
+  - build
+  - dev
+
+# Severity levels to fail on
+severity:
+  - critical
+  - high
+
+# Allow specific packages with known issues (temporary exceptions)
+# Format: "crate-name@version": "reason"
+allow-list: {}

@@ -1,0 +1,323 @@
+name: Enhanced CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * 0'  # Weekly on Sunday
+
+permissions:
+  contents: read
+  security-events: write
+  packages: write
+
+env:
+  RUST_VERSION: stable
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ============================================================
+  # CODE QUALITY & FORMATTING
+  # ============================================================
+  fmt:
+    name: Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # ============================================================
+  # SECURITY SCANNING
+  # ============================================================
+  cargo-audit:
+    name: Vulnerability Scan (cargo-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Run cargo-audit
+        run: cargo audit --deny warnings
+
+  cargo-deny:
+    name: Dependency Policy (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+      - name: Run cargo-deny
+        run: cargo deny check all
+
+  trufflehog:
+    name: Secret Detection (TruffleHog)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run TruffleHog
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+          head: HEAD
+          extra_args: --fail --json
+
+  # ============================================================
+  # SBOM GENERATION
+  # ============================================================
+  sbom:
+    name: SBOM Generation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-cyclonedx
+        run: cargo install cargo-cyclonedx --locked
+      - name: Generate SBOM
+        run: cargo cyclonedx --format json --output-target sbom.json
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+          retention-days: 90
+
+  # ============================================================
+  # GO VULNERABILITY CHECK
+  # ============================================================
+  govulncheck:
+    name: Go Vulnerability Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: Run govulncheck
+        run: govulncheck ./...
+        continue-on-error: true
+
+  # ============================================================
+  # DEPENDENCY REVIEW
+  # ============================================================
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    steps:
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          config-file: '.github/dependency-review-config.yml'
+          fail-on-severity: high
+
+  # ============================================================
+  # UNIT & INTEGRATION TESTS
+  # ============================================================
+  test:
+    name: Test Suite
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: test-${{ matrix.os }}
+      - name: Run unit tests
+        run: cargo test --workspace --lib
+      - name: Run integration tests (Linux/macOS only)
+        if: matrix.os != 'windows-latest'
+        run: cargo test --workspace --features daemon --lib
+      - name: Run all tests (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test --workspace --features daemon
+
+  # ============================================================
+  # BENCHMARK REGRESSION DETECTION
+  # ============================================================
+  benchmarks:
+    name: Benchmark Regression Detection
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: bench
+      - name: Run benchmarks
+        run: cargo bench --bench regression -- --output-format json > benchmark-results.json
+      - name: Run regression detection
+        run: |
+          cd benches
+          python3 run_benchmarks.py --threshold 0.05 --fail-on-regression
+        continue-on-error: true
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: |
+            benchmark-results.json
+            benches/baseline.json
+          retention-days: 30
+
+  # ============================================================
+  # DOCUMENTATION CHECK
+  # ============================================================
+  docs:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check required docs exist
+        run: |
+          for f in README.md DESIGN_DOCUMENT.md PORTFOLIO_CASE_STUDY.md CHANGELOG.md SECURITY.md CONTRIBUTING.md; do
+            if [ ! -f "$f" ]; then
+              echo "Missing required document: $f"
+              exit 1
+            fi
+          done
+          echo "All required documents present"
+      - name: Check architecture visualization
+        run: |
+          if [ ! -f "docs/architecture/index.html" ]; then
+            echo "Missing architecture visualization"
+            exit 1
+          fi
+          echo "Architecture visualization present"
+
+  # ============================================================
+  # RELEASE BUILD
+  # ============================================================
+  release-build:
+    name: Release Build
+    runs-on: ${{ matrix.os }}
+    needs: [test, cargo-audit, cargo-deny, trufflehog]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.os }}
+      - name: Build release
+        run: cargo build --release --package appa --features daemon --target ${{ matrix.target }}
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: appa-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/appa*
+          retention-days: 90
+
+  # ============================================================
+  # DOCKER IMAGE
+  # ============================================================
+  docker:
+    name: Docker Image
+    runs-on: ubuntu-latest
+    needs: [test, cargo-audit, cargo-deny]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/openappa-enhanced
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ============================================================
+  # NOTIFICATION
+  # ============================================================
+  notify:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: [fmt, clippy, cargo-audit, cargo-deny, trufflehog, test, benchmarks, docs]
+    if: failure()
+    steps:
+      - name: Send failure notification
+        run: |
+          echo "CI/CD pipeline failed"
+          echo "Workflow: ${{ github.workflow }}"
+          echo "Run: ${{ github.run_id }}"
+          # Add your notification logic here (Slack, email, etc.)
